@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { buildApiUrl, API_ENDPOINTS } from '../config/api'
 
 interface AuthContextType {
   token: string | null
@@ -27,7 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     try {
       // Try to login first
-      const loginResponse = await fetch('http://localhost:8000/auth/login', {
+      const loginResponse = await fetch(buildApiUrl(API_ENDPOINTS.LOGIN), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -43,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // If login fails, try to register
-      const registerResponse = await fetch('http://localhost:8000/auth/register', {
+      const registerResponse = await fetch(buildApiUrl(API_ENDPOINTS.REGISTER), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -59,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // After successful registration, login
-      const retryLoginResponse = await fetch('http://localhost:8000/auth/login', {
+      const retryLoginResponse = await fetch(buildApiUrl(API_ENDPOINTS.LOGIN), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })

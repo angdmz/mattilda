@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import schools, students, invoices, payments, account_statements, auth
@@ -8,9 +9,16 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Configure CORS for development and production
+allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+# Add production origins if environment variable is set
+if cors_origins := os.getenv("CORS_ORIGINS"):
+    allowed_origins.extend([origin.strip() for origin in cors_origins.split(",")])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://144.33.14.54:3000/", "http://localhost:3000/"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
