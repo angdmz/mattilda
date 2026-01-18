@@ -3,14 +3,16 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from moneyed import Money
-from app.models import Payment, PaymentImputation, Invoice
+from app.models import Payment, PaymentImputation, Invoice, Student
 from app.schemas import PaymentCreate
 from app.money import currency, money_from_cents
+from app.cache import RedisCache, student_statement_key, school_statement_key
 
 
 class PaymentService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, cache: RedisCache):
         self.db = db
+        self.cache = cache
 
     async def create_payment(self, payment_data: PaymentCreate) -> Payment:
         cur = currency(payment_data.currency)
@@ -61,6 +63,10 @@ class PaymentService:
         
         await self.db.commit()
         await self.db.refresh(payment)
+        
+        # Invalidate cache for student and school statements
+        await self._invalidate_cache(payment.student_id)
+        
         return payment
 
     async def get_payment(self, payment_id: UUID) -> Optional[Payment]:
@@ -83,6 +89,27 @@ class PaymentService:
         if not payment:
             return False
         
+        student_id = payment.student_id
+        
         await self.db.delete(payment)
         await self.db.commit()
+        
+        # Invalidate cache for student and school statements
+        await self._invalidate_cache(student_id)
+        
         return True
+    
+    async def _invalidate_cache(self, student_id: UUID):
+        """Invalidate cache for student and their school."""
+        # Get student to find school_id
+        result = await self.db.execute(
+            select(Student).where(Student.id == student_id)
+        )
+        student = result.scalar_one_or_none()
+        
+        if student:
+            # Invalidate student statement cache
+            await self.cache.delete(student_statement_key(student_id))
+            
+            # Invalidate school statement cache
+            await self.cache.delete(school_statement_key(student.school_id))

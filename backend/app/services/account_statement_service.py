@@ -10,15 +10,24 @@ from app.schemas.account_statement import (
     MoneyAmount, InvoiceDetail, StudentSummary
 )
 from app.money import currency, cents_from_money, money_from_cents
+from app.cache import RedisCache, student_statement_key, school_statement_key
 import logging
 
 logger = logging.getLogger(__name__)
 
 class AccountStatementService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, cache: RedisCache):
         self.db = db
+        self.cache = cache
 
     async def get_student_statement(self, student_id: UUID) -> StudentAccountStatement:
+        # Try to get from cache first
+        cache_key = student_statement_key(student_id)
+        cached = await self.cache.get(cache_key)
+        if cached:
+            return StudentAccountStatement(**cached)
+        
+        # If not in cache, compute and cache it
         result = await self.db.execute(
             select(Student)
             .options(
@@ -55,7 +64,7 @@ class AccountStatementService:
                 description=invoice.description
             ))
         
-        return StudentAccountStatement(
+        statement = StudentAccountStatement(
             student_id=student.id,
             student_name=student.name,
             school_id=student.school.id,
@@ -65,8 +74,20 @@ class AccountStatementService:
             total_outstanding=MoneyAmount(amount_cents=cents_from_money(total_invoiced_money - total_paid_money), currency=currency_code),
             invoices=invoice_details
         )
+        
+        # Cache the result
+        await self.cache.set(cache_key, statement.model_dump())
+        
+        return statement
 
     async def get_school_statement(self, school_id: UUID) -> SchoolAccountStatement:
+        # Try to get from cache first
+        cache_key = school_statement_key(school_id)
+        cached = await self.cache.get(cache_key)
+        if cached:
+            return SchoolAccountStatement(**cached)
+        
+        # If not in cache, compute and cache it
         result = await self.db.execute(
             select(School)
             .options(
@@ -131,7 +152,7 @@ class AccountStatementService:
             total_invoiced_money = Money(0, cur)
             total_paid_money = Money(0, cur)
         
-        return SchoolAccountStatement(
+        statement = SchoolAccountStatement(
             school_id=school.id,
             school_name=school.name,
             total_invoiced=MoneyAmount(amount_cents=cents_from_money(total_invoiced_money), currency=currency_code),
@@ -140,3 +161,8 @@ class AccountStatementService:
             number_of_students=len(school.students),
             students=student_summaries
         )
+        
+        # Cache the result
+        await self.cache.set(cache_key, statement.model_dump())
+        
+        return statement

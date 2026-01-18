@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from app.main import app
 from app.db import Base, get_db
 from app.settings import Settings
+from app.dependencies import get_cache
+from tests.mock_cache import MockCache
 
 
 @pytest.fixture(scope="session")
@@ -112,6 +114,66 @@ async def authenticated_client(client: AsyncClient) -> AsyncGenerator[AsyncClien
     client.headers["Authorization"] = f"Bearer {token}"
     
     yield client
+    
+    # Clean up
+    if "Authorization" in client.headers:
+        del client.headers["Authorization"]
+
+
+@pytest.fixture(scope="function")
+async def mock_cache() -> MockCache:
+    """Create a mock cache instance for testing."""
+    return MockCache()
+
+
+@pytest.fixture(scope="function")
+async def client_with_mock_cache(db_session: AsyncSession, mock_cache: MockCache) -> AsyncGenerator[tuple[AsyncClient, MockCache], None]:
+    """Create a client with mock cache dependency override."""
+    async def override_get_db():
+        yield db_session
+    
+    async def override_get_cache():
+        return mock_cache
+    
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_cache] = override_get_cache
+    
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        yield ac, mock_cache
+    
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="function")
+async def authenticated_client_with_mock_cache(client_with_mock_cache: tuple[AsyncClient, MockCache]) -> AsyncGenerator[tuple[AsyncClient, MockCache], None]:
+    """Create an authenticated client with mock cache."""
+    client, mock_cache = client_with_mock_cache
+    
+    # Register a test user
+    await client.post(
+        "/auth/register",
+        json={
+            "email": "testuser@example.com",
+            "username": "testuser",
+            "password": "testpassword123",
+            "full_name": "Test User"
+        }
+    )
+    
+    # Login to get token
+    login_response = await client.post(
+        "/auth/login",
+        json={
+            "username": "testuser",
+            "password": "testpassword123"
+        }
+    )
+    token = login_response.json()["access_token"]
+    
+    # Add authorization header to client
+    client.headers["Authorization"] = f"Bearer {token}"
+    
+    yield client, mock_cache
     
     # Clean up
     if "Authorization" in client.headers:

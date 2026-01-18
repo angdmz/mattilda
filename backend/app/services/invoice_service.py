@@ -2,14 +2,16 @@ from uuid import UUID
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.models import Invoice
+from app.models import Invoice, Student
 from app.schemas import InvoiceCreate, InvoiceUpdate
 from app.money import currency
+from app.cache import RedisCache, student_statement_key, school_statement_key
 
 
 class InvoiceService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, cache: RedisCache):
         self.db = db
+        self.cache = cache
 
     async def create_invoice(self, invoice_data: InvoiceCreate) -> Invoice:
         currency(invoice_data.currency)
@@ -17,6 +19,10 @@ class InvoiceService:
         self.db.add(invoice)
         await self.db.commit()
         await self.db.refresh(invoice)
+        
+        # Invalidate cache for student and school statements
+        await self._invalidate_cache(invoice.student_id)
+        
         return invoice
 
     async def get_invoice(self, invoice_id: UUID) -> Optional[Invoice]:
@@ -48,6 +54,10 @@ class InvoiceService:
         
         await self.db.commit()
         await self.db.refresh(invoice)
+        
+        # Invalidate cache for student and school statements
+        await self._invalidate_cache(invoice.student_id)
+        
         return invoice
 
     async def delete_invoice(self, invoice_id: UUID) -> bool:
@@ -55,6 +65,27 @@ class InvoiceService:
         if not invoice:
             return False
         
+        student_id = invoice.student_id
+        
         await self.db.delete(invoice)
         await self.db.commit()
+        
+        # Invalidate cache for student and school statements
+        await self._invalidate_cache(student_id)
+        
         return True
+    
+    async def _invalidate_cache(self, student_id: UUID):
+        """Invalidate cache for student and their school."""
+        # Get student to find school_id
+        result = await self.db.execute(
+            select(Student).where(Student.id == student_id)
+        )
+        student = result.scalar_one_or_none()
+        
+        if student:
+            # Invalidate student statement cache
+            await self.cache.delete(student_statement_key(student_id))
+            
+            # Invalidate school statement cache
+            await self.cache.delete(school_statement_key(student.school_id))
